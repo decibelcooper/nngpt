@@ -78,4 +78,4 @@ def draw_tomo(
         else:
             fig.colorbar(im)
 
-    fig.show()
+    return fig
