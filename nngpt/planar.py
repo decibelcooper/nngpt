@@ -30,60 +30,22 @@ class Planar(object):
         self._init_design(sample_density)
         self._init_tomo()
 
-    def tomo(self, q, max_iter=100, ret_pixels=True):
+    def tomo(self, d, ret_pixels=True):
         t0 = time.time()
 
-        p = self.p
-        retain = np.ones(len(self.Sigma_f_indices), dtype=np.bool)
-
-        n_iter = 0
-
-        while True:
-            if len(p) == 0:
-                feed_dict = {
-                    self.Q: q,
-                }
-                s = np.reshape(self.S_init.eval(
-                    feed_dict, session=self.sess), -1)
-            else:
-                feed_dict = {
-                    self.P: p,
-                    self.P_f_retain: retain,
-                    self.Q: q,
-                }
-                s = np.reshape(self.S.eval(feed_dict, session=self.sess), -1)
-            n_iter += 1
-
-            if n_iter >= max_iter:
-                logging.info('hit max iterations')
-                break
-
-            neg = np.flatnonzero(s < 0.01*np.max(s))
-            if len(neg) == 0:
-                break
-
-            neg_pixels = p[neg]
-
-            abandon_indices = np.concatenate(self.abandon_lookup[neg_pixels])
-            np.put(retain, abandon_indices, False)
-
-            p_new = np.setdiff1d(p, neg_pixels)
-            if len(p_new) == 0:
-                logging.info('p is null set')
-                break
-            else:
-                p = p_new
+        iters, phi_p, p = self.sess.run(
+            (self.iters, self.phi_p, self.p), feed_dict={self.d: d})
 
         t1 = time.time()
 
         logging.info(f'tomography time: {t1-t0:.3f}')
-        logging.info(f'tomography iterations: {n_iter}')
+        logging.info(f'tomography iterations: {iters}')
         logging.info(f'unconstrained pixel count: {len(p)}')
 
         if ret_pixels:
-            f = np.zeros(self.g.shape[1])
-            f[list(p)] = s
-            return np.reshape(f, (self.m, self.n))
+            phi = np.zeros(self.G.shape[1])
+            phi[p] = phi_p
+            return np.reshape(phi, (self.m, self.n))
 
     def bin_channels(self, xy, **kwargs):
         t0 = time.time()
@@ -137,7 +99,7 @@ class Planar(object):
         n_pixels = self.m * self.n
 
         # generate design matrix g
-        self.g = np.zeros((self.n_chans, n_pixels))
+        self.G = np.zeros((self.n_chans, n_pixels))
 
         for pixel in range(0, n_pixels):
             i = pixel // self.n
@@ -163,17 +125,17 @@ class Planar(object):
 
             for chan, count in self.chan_counts(xy, split=False, randomize=False):
                 if chan >= 0:
-                    self.g[chan][pixel] += count
+                    self.G[chan][pixel] += count
 
-        self.g /= 2*n_samples
+        self.G /= 2*n_samples
 
         t1 = time.time()
         logging.info(f'g integration time: {t1-t0:.3f}')
         t0 = time.time()
 
         # generate sparse covariance matrix prior
-        Sigma_f_indices = []
-        Sigma_f_values = []
+        Sigma_p_indices = []
+        Sigma_p_values = []
         abandon_lookup = [[] for i in range(0, n_pixels)]
         for i in range(0, n_pixels):
             inp = np.array([i for j in range(0, n_pixels)])
@@ -193,23 +155,23 @@ class Planar(object):
             ij_indices = np.concatenate((i_indices, j_indices), axis=1)
 
             abandon_lookup[i].extend(
-                [i for i in range(len(Sigma_f_values), len(
-                    Sigma_f_values) + len(values))],
+                [i for i in range(len(Sigma_p_values), len(
+                    Sigma_p_values) + len(values))],
             )
             for k in range(0, len(indices)):
                 j = indices[k]
                 if j == i:
                     continue
-                abandon_lookup[j].append(len(Sigma_f_values) + k)
+                abandon_lookup[j].append(len(Sigma_p_values) + k)
 
-            Sigma_f_indices.extend(ij_indices)
-            Sigma_f_values.extend(values)
+            Sigma_p_indices.extend(ij_indices)
+            Sigma_p_values.extend(values)
 
-        Sigma_f_indices = np.array(Sigma_f_indices)
-        Sigma_f_values = np.array(Sigma_f_values)
+        Sigma_p_indices = np.array(Sigma_p_indices)
+        Sigma_p_values = np.array(Sigma_p_values)
         abandon_lookup = np.array(abandon_lookup)
-        self.Sigma_f_indices = Sigma_f_indices
-        self.Sigma_f_values = Sigma_f_values
+        self.Sigma_prior_indices = Sigma_p_indices
+        self.Sigma_prior_values = Sigma_p_values
         self.abandon_lookup = abandon_lookup
 
         t1 = time.time()
@@ -232,43 +194,72 @@ class Planar(object):
         self.pixel_counts = pixel_counts
 
     def _init_tomo(self):
-        t0 = time.time()
-
-        self.p = np.array([i for i in range(0, self.g.shape[1])])
-
         # Setup tensorflow graph
-        gc.collect()
         graph = tf.Graph()
         graph.as_default()
         self.sess = tf.compat.v1.Session()
+        gc.collect()
 
-        self.P = tf.compat.v1.placeholder(dtype=tf.int32, shape=(None,))
-        self.P_f_retain = tf.compat.v1.placeholder(dtype=tf.bool)
-        self.Q = tf.compat.v1.placeholder(dtype=tf.float32, shape=(None,))
-
-        Q = tf.reshape(self.Q, (-1, 1))
-        q_sum = tf.reduce_sum(Q)
-        Sigma = tf.compat.v1.matrix_diag(tf.abs(self.Q) + 1)
-        G = tf.convert_to_tensor(self.g, dtype=tf.float32)
-        G_T = tf.transpose(G)
-        G_P_T = tf.gather(G_T, self.P, axis=0)
-        G_P = tf.transpose(G_P_T)
-        P_f = tf.sparse.SparseTensor(
-            indices=self.Sigma_f_indices,
-            values=4 * q_sum * self.Sigma_f_values,
-            dense_shape=(self.g.shape[1], self.g.shape[1]),
+        # inputs
+        self.d = tf.compat.v1.placeholder(dtype=tf.float32, shape=(None,))
+        G = tf.convert_to_tensor(self.G, dtype=tf.float32)
+        Sigma_prior = tf.sparse.SparseTensor(
+            indices=self.Sigma_prior_indices,
+            values=4 * tf.reduce_sum(self.d) * self.Sigma_prior_values,
+            dense_shape=(self.G.shape[1], self.G.shape[1]),
         )
-        P_f_P = tf.sparse.retain(P_f, self.P_f_retain)
-        A = tf.sparse.sparse_dense_matmul(P_f, G_T)
-        A_P = tf.gather(tf.sparse.sparse_dense_matmul(P_f_P, G_T), self.P)
+        abandon_lookup = tf.ragged.constant(self.abandon_lookup)
 
-        L = tf.linalg.cholesky(Sigma + G @ A)
-        Q_P = tf.linalg.cholesky_solve(L, Q)
-        self.S_init = A @ Q_P
+        # prepared inputs
+        d = tf.reshape(self.d, (-1, 1))
+        Sigma_d = tf.compat.v1.matrix_diag(tf.abs(self.d) + 1)
+        G_T = tf.transpose(G)
 
-        L = tf.linalg.cholesky(Sigma + G_P @ A_P)
-        Q_P = tf.linalg.cholesky_solve(L, Q)
-        self.S = A_P @ Q_P
+        # loop variables
+        phi_p = -tf.ones(self.G.shape[1], dtype=tf.float32)
+        p = tf.convert_to_tensor(
+            [i for i in range(0, self.G.shape[1])], dtype=tf.int32)
+        Sigma_prior_retain = tf.ones(
+            len(self.Sigma_prior_values), dtype=tf.bool)
+        index = tf.constant(0, dtype=tf.int32)
 
-        t1 = time.time()
-        logging.info(f'setup time: {t1-t0:.3f}')
+        # loop callables
+        def loop_cond(index, phi_p, p, Sigma_prior_retain):
+            return tf.reduce_any(phi_p < 0)
+
+        def loop_body(index, phi_p, p, Sigma_prior_retain):
+            G_p = tf.gather(G, p, axis=1)
+            Sigma_prior_p = tf.sparse.retain(
+                Sigma_prior, Sigma_prior_retain)
+            A_p = tf.gather(tf.sparse.sparse_dense_matmul(
+                Sigma_prior_p, G_T), p)
+            decomp = tf.linalg.cholesky(Sigma_d + G_p @ A_p)
+            d_w = tf.linalg.cholesky_solve(decomp, d)
+            phi_p = tf.reshape(A_p @ d_w, (-1,))
+
+            neg = tf.gather(p, tf.reshape(tf.where(phi_p <= 0.0), (-1,)))
+            p = tf.reshape(
+                tf.sparse.to_dense(tf.sets.difference(tf.reshape(
+                    p, (1, -1)), tf.reshape(neg, (1, -1)))),
+                (-1,)
+            )
+
+            abandon_indices = tf.concat(
+                tf.gather(abandon_lookup, neg), 0).flat_values
+            Sigma_prior_retain = tf.tensor_scatter_nd_update(
+                Sigma_prior_retain,
+                tf.reshape(abandon_indices, (-1, 1)),
+                tf.broadcast_to(False, tf.shape(abandon_indices)),
+            )
+
+            return (index+1, phi_p, p, Sigma_prior_retain)
+
+        self.iters, self.phi_p, self.p, *_ = tf.while_loop(
+            loop_cond,
+            loop_body,
+            (index, phi_p, p, Sigma_prior_retain),
+            shape_invariants=(index.shape, tf.TensorShape((None,)), tf.TensorShape((None,)),
+                              Sigma_prior_retain.shape),
+            parallel_iterations=20,
+            back_prop=False,
+        )
