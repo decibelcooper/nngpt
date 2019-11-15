@@ -215,19 +215,8 @@ class Planar(object):
         Sigma_d = tf.compat.v1.matrix_diag(tf.abs(self.d) + 1)
         G_T = tf.transpose(G)
 
-        # loop variables
-        phi_p = -tf.ones(self.G.shape[1], dtype=tf.float32)
-        p = tf.convert_to_tensor(
-            [i for i in range(0, self.G.shape[1])], dtype=tf.int32)
-        Sigma_prior_retain = tf.ones(
-            len(self.Sigma_prior_values), dtype=tf.bool)
-        index = tf.constant(0, dtype=tf.int32)
-
-        # loop callables
-        def loop_cond(index, phi_p, p, Sigma_prior_retain):
-            return tf.reduce_any(phi_p < 0)
-
-        def loop_body(index, phi_p, p, Sigma_prior_retain):
+        # generate expanded step loop
+        def update(index, phi_p, p, Sigma_prior_retain):
             G_p = tf.gather(G, p, axis=1)
             Sigma_prior_p = tf.sparse.retain(
                 Sigma_prior, Sigma_prior_retain)
@@ -252,14 +241,22 @@ class Planar(object):
                 tf.broadcast_to(False, tf.shape(abandon_indices)),
             )
 
-            return (index+1, phi_p, p, Sigma_prior_retain)
+            return [index+1, phi_p, p, Sigma_prior_retain, tf.greater(tf.shape(neg)[0], 0)]
 
-        self.iters, self.phi_p, self.p, *_ = tf.while_loop(
-            loop_cond,
-            loop_body,
-            (index, phi_p, p, Sigma_prior_retain),
-            shape_invariants=(index.shape, tf.TensorShape((None,)), tf.TensorShape((None,)),
-                              Sigma_prior_retain.shape),
-            parallel_iterations=20,
-            back_prop=False,
-        )
+        vars = [
+            tf.constant(0, dtype=tf.int32),
+            -tf.ones(self.G.shape[1], dtype=tf.float32),
+            tf.convert_to_tensor(
+                [i for i in range(0, self.G.shape[1])], dtype=tf.int32),
+            tf.ones(len(self.Sigma_prior_values), dtype=tf.bool),
+        ]
+        cond = tf.constant(True, dtype=tf.bool)
+        for _ in range(20):
+            *vars, cond = tf.cond(
+                cond,
+                lambda: update(*vars),
+                lambda: vars+[cond],
+            )
+
+        # publish useful results
+        self.iters, self.phi_p, self.p, *_ = vars
