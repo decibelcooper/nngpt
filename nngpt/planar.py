@@ -215,8 +215,9 @@ class Planar(object):
         Sigma_d = tf.compat.v1.matrix_diag(tf.abs(self.d) + 1)
         G_T = tf.transpose(G)
 
-        # generate expanded step loop
+        # define step loop body for iterations that require an update
         def update(index, phi_p, p, Sigma_prior_retain):
+            # find solution to phi given the particular passive set p
             G_p = tf.gather(G, p, axis=1)
             Sigma_prior_p = tf.sparse.retain(
                 Sigma_prior, Sigma_prior_retain)
@@ -226,6 +227,7 @@ class Planar(object):
             d_w = tf.linalg.cholesky_solve(decomp, d)
             phi_p = tf.reshape(A_p @ d_w, (-1,))
 
+            # determine pixel indices that are negative, and remove them from p
             neg = tf.gather(p, tf.reshape(tf.where(phi_p <= 0.0), (-1,)))
             p = tf.reshape(
                 tf.sparse.to_dense(tf.sets.difference(tf.reshape(
@@ -233,6 +235,8 @@ class Planar(object):
                 (-1,)
             )
 
+            # look up the appropriate Sigma_prior indices to abandon given the
+            # newly found negative pixel indices
             abandon_indices = tf.concat(
                 tf.gather(abandon_lookup, neg), 0).flat_values
             Sigma_prior_retain = tf.tensor_scatter_nd_update(
@@ -241,8 +245,11 @@ class Planar(object):
                 tf.broadcast_to(False, tf.shape(abandon_indices)),
             )
 
+            # return updated lop variables and and updated loop condition
             return [index+1, phi_p, p, Sigma_prior_retain, tf.greater(tf.shape(neg)[0], 0)]
 
+        # initialize loop variables in the order that they appear in the update
+        # arguments
         vars = [
             tf.constant(0, dtype=tf.int32),
             -tf.ones(self.G.shape[1], dtype=tf.float32),
@@ -250,6 +257,9 @@ class Planar(object):
                 [i for i in range(0, self.G.shape[1])], dtype=tf.int32),
             tf.ones(len(self.Sigma_prior_values), dtype=tf.bool),
         ]
+
+        # create expanded loop of update function that bypasses the function
+        # once update returns a false loop condition
         cond = tf.constant(True, dtype=tf.bool)
         for _ in range(20):
             *vars, cond = tf.cond(
