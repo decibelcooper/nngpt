@@ -252,7 +252,7 @@ class Planar(object):
         # arguments
         vars = [
             tf.constant(0, dtype=tf.int32),
-            -tf.ones(self.G.shape[1], dtype=tf.float32),
+            tf.zeros(self.G.shape[1], dtype=tf.float32),
             tf.convert_to_tensor(
                 [i for i in range(0, self.G.shape[1])], dtype=tf.int32),
             tf.ones(len(self.Sigma_prior_values), dtype=tf.bool),
