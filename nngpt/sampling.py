@@ -18,7 +18,7 @@ def sample_normal(means, covs, n_samples):
     return xy
 
 
-def sample_circle(n=1e7, r=10, sigma=2):
+def sample_circle(n=1e7, r=15, sigma=2):
     t0 = time.time()
 
     phi = np.random.uniform(0, 2*np.pi, int(n))
@@ -35,7 +35,7 @@ def sample_circle(n=1e7, r=10, sigma=2):
     return xy
 
 
-def sample_square(n=1e7, a=15.708, sigma=2):
+def sample_square(n=1e7, a=23.56, sigma=2):
     t0 = time.time()
 
     choices = [-a/2, a/2]
