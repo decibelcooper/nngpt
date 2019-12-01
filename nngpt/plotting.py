@@ -59,16 +59,16 @@ def draw_tomo(
         )
         ax.label_outer()
 
-        if mean is not None and cov is not None:
-            if mean[i] is not None and cov[i] is not None:
-                for m, c in zip(mean[i], cov[i]):
-                    confidence_ellipse(
-                        m, c, ax, n_std=n_std, edgecolor='red')
         if true_mean is not None and true_cov is not None:
             if true_mean[i] is not None and true_cov[i] is not None:
                 for m, c in zip(true_mean[i], true_cov[i]):
                     confidence_ellipse(
                         m, c, ax, n_std=n_std, edgecolor='cyan')
+        if mean is not None and cov is not None:
+            if mean[i] is not None and cov[i] is not None:
+                for m, c in zip(mean[i], cov[i]):
+                    confidence_ellipse(
+                        m, c, ax, n_std=n_std, edgecolor='red', linestyle='--')
 
     if colorbar:
         if len(img) > 1:

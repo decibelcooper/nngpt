@@ -199,6 +199,7 @@ class Planar(object):
         graph.as_default()
         self.sess = tf.compat.v1.Session()
         gc.collect()
+        tf.compat.v1.disable_eager_execution()
 
         # inputs
         self.d = tf.compat.v1.placeholder(dtype=tf.float32, shape=(None,))
