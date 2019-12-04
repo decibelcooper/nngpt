@@ -8,7 +8,7 @@ with open(path.join(this_directory, 'README.md')) as f:
 
 setuptools.setup(
     name='nngpt',
-    version='0.1',
+    version='0.2',
     description='Toolkit for fast-ish nonnegative Gaussian process tomography',
     long_description=long_description,
     long_description_content_type='text/markdown',
