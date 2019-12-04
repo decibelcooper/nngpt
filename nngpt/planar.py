@@ -28,13 +28,11 @@ class Planar(object):
         self.max_diff_sigma = max_diff_sigma
 
         self._init_design(sample_density)
-        self._init_tomo()
 
     def tomo(self, d, ret_pixels=True):
         t0 = time.time()
 
-        iters, phi_p, p = self.sess.run(
-            (self.iters, self.phi_p, self.p), feed_dict={self.d: d})
+        iters, phi_p, p = self._tomo(d)
 
         t1 = time.time()
 
@@ -193,28 +191,23 @@ class Planar(object):
             return zip(pixels, counts)
         self.pixel_counts = pixel_counts
 
-    def _init_tomo(self):
-        # Setup tensorflow graph
-        graph = tf.Graph()
-        graph.as_default()
-        self.sess = tf.compat.v1.Session()
-        gc.collect()
-        tf.compat.v1.disable_eager_execution()
+    @tf.function
+    def _tomo(self, d):
+        # prepared inputs
+        d = tf.cast(d, tf.float32)
+        Sigma_d = tf.linalg.diag(tf.abs(d) + 1)
+        d = tf.reshape(d, (-1, 1))
 
-        # inputs
-        self.d = tf.compat.v1.placeholder(dtype=tf.float32, shape=(None,))
+        # constants
         G = tf.convert_to_tensor(self.G, dtype=tf.float32)
+        G_T = tf.transpose(G)
         Sigma_prior = tf.sparse.SparseTensor(
             indices=self.Sigma_prior_indices,
-            values=4 * tf.reduce_sum(self.d) * self.Sigma_prior_values,
+            values=4 * tf.reduce_sum(d) *
+            tf.cast(self.Sigma_prior_values, tf.float32),
             dense_shape=(self.G.shape[1], self.G.shape[1]),
         )
         abandon_lookup = tf.ragged.constant(self.abandon_lookup)
-
-        # prepared inputs
-        d = tf.reshape(self.d, (-1, 1))
-        Sigma_d = tf.compat.v1.matrix_diag(tf.abs(self.d) + 1)
-        G_T = tf.transpose(G)
 
         # define step loop body for iterations that require an update
         def update(index, phi_p, p, Sigma_prior_retain):
@@ -269,5 +262,6 @@ class Planar(object):
                 lambda: vars+[cond],
             )
 
-        # publish useful results
-        self.iters, self.phi_p, self.p, *_ = vars
+        # return useful results
+        iters, phi_p, p, *_ = vars
+        return (iters, phi_p, p)
