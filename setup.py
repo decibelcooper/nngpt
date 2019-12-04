@@ -18,7 +18,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=[
         'numpy',
-        'tensorflow',
+        'tensorflow>=2.0.0',
         'scipy',
         'matplotlib',
         ],
