@@ -1,6 +1,6 @@
 # nngpt
 This project is for fast-ish reconstruction using the concept of Gaussian
-process tomography (see [Li, Dong, eta al](https://doi.org/10.1063/1.4817591)
+process tomography (see [Svensson, J.](http://www.euro-fusionscipub.org/wp-content/uploads/eurofusion/EFDP11024.pdf), [Li, Dong, eta al](https://doi.org/10.1063/1.4817591),
 and [Wang, T., et al](https://doi.org/10.1063/1.5023162)) while applying
 nonnegativity constraints.  The motivation for this is the benefit that
 nonnegative constraints provide in the context of reconstruction from
